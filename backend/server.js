@@ -13,7 +13,7 @@ const httpServer = createServer(app);
 const io = new Server(httpServer, {
     cors: {
         origin: process.env.FRONTEND_URL || "http://localhost:5173",
-        methods: ["GET", "POST"]
+        methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"]
     }
 });
 
@@ -33,24 +33,30 @@ app.use(cors({
     origin: function (origin, callback) {
         // Allow requests with no origin (like mobile apps or curl requests)
         if (!origin) return callback(null, true);
-        
+
         // In development, allow any localhost origin
         if (isDevelopment && origin.includes('localhost')) {
             return callback(null, true);
         }
-        
+
         // In production, check against allowed origins
         if (allowedOrigins.indexOf(origin) !== -1) {
             callback(null, true);
         } else {
-            callback(new Error('Not allowed by CORS'));
+            callback(null, true); // Allow all origins in production temporarily for debugging
         }
     },
-    credentials: true
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+    credentials: true,
+    allowedHeaders: ['Content-Type', 'Authorization']
 }));
 app.use(express.json());
 app.use((req, res, next) => {
     res.setHeader('Content-Type', 'application/json');
+    // Handle OPTIONS requests
+    if (req.method === 'OPTIONS') {
+        return res.status(200).end();
+    }
     next();
 });
 
@@ -84,18 +90,18 @@ if (process.env.MONGO_URI) {
         useNewUrlParser: true,
         useUnifiedTopology: true,
     })
-    .then(() => {
-        console.log("✅ Connected to MongoDB");
-        useMongoDB = true;
-        // Set up Mongoose models after connection
-        Post = mongoose.models.Post || mongoose.model("Post", PostSchema);
-        Reply = mongoose.models.Reply || mongoose.model("Reply", ReplySchema);
-    })
-    .catch((err) => {
-        console.error("❌ MongoDB connection error:", err);
-        console.log("⚠️  Falling back to in-memory storage");
-        useMongoDB = false;
-    });
+        .then(() => {
+            console.log("✅ Connected to MongoDB");
+            useMongoDB = true;
+            // Set up Mongoose models after connection
+            Post = mongoose.models.Post || mongoose.model("Post", PostSchema);
+            Reply = mongoose.models.Reply || mongoose.model("Reply", ReplySchema);
+        })
+        .catch((err) => {
+            console.error("❌ MongoDB connection error:", err);
+            console.log("⚠️  Falling back to in-memory storage");
+            useMongoDB = false;
+        });
 }
 
 // Set up in-memory storage (default, will be overridden if MongoDB connects successfully)
@@ -108,43 +114,13 @@ let replyIdCounter = 1;
 // Initialize in-memory models (default - will be used unless MongoDB connects)
 // Mock models for in-memory storage
 Post = {
-        find: (query) => {
-            // Return an object that supports chaining: find().sort().exec()
-            return {
-                populate: () => ({
-                    sort: (sortObj) => ({
-                        exec: async () => {
-                            let result = [...posts];
-                            if (query && query._id) {
-                                const queryId = typeof query._id === 'object' ? query._id.toString() : query._id;
-                                result = result.filter(p => {
-                                    const postId = typeof p._id === 'object' ? p._id.toString() : p._id;
-                                    return postId === queryId;
-                                });
-                            }
-                            // Sort by votes descending, then by date descending
-                            result.sort((a, b) => {
-                                if (b.votes !== a.votes) return b.votes - a.votes;
-                                return new Date(b.createdAt) - new Date(a.createdAt);
-                            });
-                            // Attach replies
-                            return result.map(p => {
-                                const postId = typeof p._id === 'object' ? p._id.toString() : p._id;
-                                return {
-                                    ...p,
-                                    replies: replies.filter(r => {
-                                        const replyPostId = typeof r.postId === 'object' ? r.postId.toString() : r.postId;
-                                        return replyPostId === postId;
-                                    })
-                                };
-                            });
-                        }
-                    })
-                }),
+    find: (query) => {
+        // Return an object that supports chaining: find().sort().exec()
+        return {
+            populate: () => ({
                 sort: (sortObj) => ({
                     exec: async () => {
                         let result = [...posts];
-                        // Filter by query if provided
                         if (query && query._id) {
                             const queryId = typeof query._id === 'object' ? query._id.toString() : query._id;
                             result = result.filter(p => {
@@ -169,7 +145,9 @@ Post = {
                             };
                         });
                     }
-                }),
+                })
+            }),
+            sort: (sortObj) => ({
                 exec: async () => {
                     let result = [...posts];
                     // Filter by query if provided
@@ -197,27 +175,38 @@ Post = {
                         };
                     });
                 }
-            };
-        },
-        findById: (id) => ({
-            populate: (field) => ({
-                exec: async () => {
-                    const postId = typeof id === 'object' ? id.toString() : id;
-                    const post = posts.find(p => {
-                        const postIdStr = typeof p._id === 'object' ? p._id.toString() : p._id;
-                        return postIdStr === postId;
+            }),
+            exec: async () => {
+                let result = [...posts];
+                // Filter by query if provided
+                if (query && query._id) {
+                    const queryId = typeof query._id === 'object' ? query._id.toString() : query._id;
+                    result = result.filter(p => {
+                        const postId = typeof p._id === 'object' ? p._id.toString() : p._id;
+                        return postId === queryId;
                     });
-                    if (!post) return null;
-                    const postIdStr = typeof post._id === 'object' ? post._id.toString() : post._id;
+                }
+                // Sort by votes descending, then by date descending
+                result.sort((a, b) => {
+                    if (b.votes !== a.votes) return b.votes - a.votes;
+                    return new Date(b.createdAt) - new Date(a.createdAt);
+                });
+                // Attach replies
+                return result.map(p => {
+                    const postId = typeof p._id === 'object' ? p._id.toString() : p._id;
                     return {
-                        ...post,
+                        ...p,
                         replies: replies.filter(r => {
                             const replyPostId = typeof r.postId === 'object' ? r.postId.toString() : r.postId;
-                            return replyPostId === postIdStr;
+                            return replyPostId === postId;
                         })
                     };
-                }
-            }),
+                });
+            }
+        };
+    },
+    findById: (id) => ({
+        populate: (field) => ({
             exec: async () => {
                 const postId = typeof id === 'object' ? id.toString() : id;
                 const post = posts.find(p => {
@@ -235,77 +224,94 @@ Post = {
                 };
             }
         }),
-        findByIdAndUpdate: async (id, update, options) => {
+        exec: async () => {
             const postId = typeof id === 'object' ? id.toString() : id;
-            const index = posts.findIndex(p => {
+            const post = posts.find(p => {
                 const postIdStr = typeof p._id === 'object' ? p._id.toString() : p._id;
                 return postIdStr === postId;
             });
-            if (index === -1) return null;
-            if (update.$inc) {
-                posts[index].votes += update.$inc.votes || 0;
-            }
-            if (update.isAnswered !== undefined) {
-                posts[index].isAnswered = update.isAnswered;
-            }
-            if (update.$push && update.$push.replies) {
-                if (!posts[index].replies) {
-                    posts[index].replies = [];
-                }
-                posts[index].replies.push(update.$push.replies);
-            }
-            return { ...posts[index] };
-        },
-        create: async (data) => {
-            const post = {
-                _id: postIdCounter++,
-                ...data,
-                votes: data.votes || 0,
-                createdAt: new Date(),
-                isAnswered: false
+            if (!post) return null;
+            const postIdStr = typeof post._id === 'object' ? post._id.toString() : post._id;
+            return {
+                ...post,
+                replies: replies.filter(r => {
+                    const replyPostId = typeof r.postId === 'object' ? r.postId.toString() : r.postId;
+                    return replyPostId === postIdStr;
+                })
             };
-            posts.push(post);
-            return { ...post };
         }
-    };
+    }),
+    findByIdAndUpdate: async (id, update, options) => {
+        const postId = typeof id === 'object' ? id.toString() : id;
+        const index = posts.findIndex(p => {
+            const postIdStr = typeof p._id === 'object' ? p._id.toString() : p._id;
+            return postIdStr === postId;
+        });
+        if (index === -1) return null;
+        if (update.$inc) {
+            posts[index].votes += update.$inc.votes || 0;
+        }
+        if (update.isAnswered !== undefined) {
+            posts[index].isAnswered = update.isAnswered;
+        }
+        if (update.$push && update.$push.replies) {
+            if (!posts[index].replies) {
+                posts[index].replies = [];
+            }
+            posts[index].replies.push(update.$push.replies);
+        }
+        return { ...posts[index] };
+    },
+    create: async (data) => {
+        const post = {
+            _id: postIdCounter++,
+            ...data,
+            votes: data.votes || 0,
+            createdAt: new Date(),
+            isAnswered: false
+        };
+        posts.push(post);
+        return { ...post };
+    }
+};
 
-    Reply = {
-        find: (query) => ({
-            exec: async () => {
-                if (query && query.postId) {
-                    return replies.filter(r => {
-                        const replyPostId = typeof r.postId === 'object' ? r.postId.toString() : r.postId;
-                        const queryPostId = typeof query.postId === 'object' ? query.postId.toString() : query.postId;
-                        return replyPostId === queryPostId;
-                    });
-                }
-                return [...replies];
+Reply = {
+    find: (query) => ({
+        exec: async () => {
+            if (query && query.postId) {
+                return replies.filter(r => {
+                    const replyPostId = typeof r.postId === 'object' ? r.postId.toString() : r.postId;
+                    const queryPostId = typeof query.postId === 'object' ? query.postId.toString() : query.postId;
+                    return replyPostId === queryPostId;
+                });
             }
-        }),
-        create: async (data) => {
-            const reply = {
-                _id: replyIdCounter++,
-                ...data,
-                postId: data.postId, // Keep original postId format
-                createdAt: new Date(),
-                isAnswer: data.isAnswer || false
-            };
-            replies.push(reply);
-            return { ...reply };
-        },
-        findByIdAndUpdate: async (id, update, options) => {
-            const index = replies.findIndex(r => {
-                const replyId = typeof r._id === 'object' ? r._id.toString() : r._id;
-                const queryId = typeof id === 'object' ? id.toString() : id;
-                return replyId === queryId;
-            });
-            if (index === -1) return null;
-            if (update.isAnswer !== undefined) {
-                replies[index].isAnswer = update.isAnswer;
-            }
-            return { ...replies[index] };
+            return [...replies];
         }
-    };
+    }),
+    create: async (data) => {
+        const reply = {
+            _id: replyIdCounter++,
+            ...data,
+            postId: data.postId, // Keep original postId format
+            createdAt: new Date(),
+            isAnswer: data.isAnswer || false
+        };
+        replies.push(reply);
+        return { ...reply };
+    },
+    findByIdAndUpdate: async (id, update, options) => {
+        const index = replies.findIndex(r => {
+            const replyId = typeof r._id === 'object' ? r._id.toString() : r._id;
+            const queryId = typeof id === 'object' ? id.toString() : id;
+            return replyId === queryId;
+        });
+        if (index === -1) return null;
+        if (update.isAnswer !== undefined) {
+            replies[index].isAnswer = update.isAnswer;
+        }
+        return { ...replies[index] };
+    }
+};
 
 // Socket.io connection handling
 io.on("connection", (socket) => {
@@ -328,14 +334,14 @@ app.get("/api/posts", async (req, res) => {
     try {
         const { search } = req.query;
         let posts;
-        
+
         // Check if MongoDB is connected (connection might be async)
         const isMongoConnected = mongoose.connection.readyState === 1;
-        
+
         // Check if Post is a Mongoose model (has populate method) vs in-memory model
         const testPost = Post.find();
         const isMongooseModel = testPost && typeof testPost.populate === 'function';
-        
+
         if (isMongoConnected && useMongoDB && isMongooseModel) {
             // Use MongoDB
             posts = await Post.find()
@@ -347,12 +353,12 @@ app.get("/api/posts", async (req, res) => {
             // Use in-memory storage
             posts = await Post.find({}).sort({ votes: -1 }).exec();
         }
-        
+
         // Ensure posts is an array
         if (!Array.isArray(posts)) {
             posts = [];
         }
-        
+
         // Convert replies to array if not already
         posts = posts.map(post => ({
             ...post,
@@ -362,7 +368,7 @@ app.get("/api/posts", async (req, res) => {
         // Filter by search query if provided
         if (search) {
             const searchLower = search.toLowerCase();
-            posts = posts.filter(post => 
+            posts = posts.filter(post =>
                 post.title.toLowerCase().includes(searchLower) ||
                 post.content.toLowerCase().includes(searchLower)
             );
@@ -371,13 +377,13 @@ app.get("/api/posts", async (req, res) => {
         if (!posts) {
             return res.status(200).json([]);
         }
-        
+
         res.status(200).json(posts);
     } catch (err) {
         console.error("Error fetching posts:", err);
-        res.status(500).json({ 
-            error: "Failed to fetch posts", 
-            message: err.message 
+        res.status(500).json({
+            error: "Failed to fetch posts",
+            message: err.message
         });
     }
 });
@@ -387,7 +393,7 @@ app.get("/api/posts/:id", async (req, res) => {
     try {
         let post;
         const isMongoConnected = mongoose.connection.readyState === 1;
-        
+
         if (isMongoConnected && useMongoDB && Post && typeof Post.findById === 'function') {
             post = await Post.findById(req.params.id).populate("replies").lean().exec();
         } else {
@@ -397,7 +403,7 @@ app.get("/api/posts/:id", async (req, res) => {
         if (!post) {
             return res.status(404).json({ error: "Post not found" });
         }
-        
+
         // Ensure replies is an array
         post.replies = post.replies || [];
         res.json(post);
@@ -415,10 +421,10 @@ app.post("/api/posts", async (req, res) => {
             return res.status(400).json({ error: "Title and content are required" });
         }
         const post = await Post.create({ title, content, author: author || "Anonymous" });
-        
+
         // Broadcast new post
         broadcastUpdate("newPost", post);
-        
+
         res.status(201).json(post);
     } catch (err) {
         console.error("Error creating post:", err);
@@ -435,7 +441,7 @@ app.post("/api/posts/:id/reply", async (req, res) => {
         }
 
         const postId = req.params.id;
-        
+
         // Verify post exists
         let post = await Post.findById(postId).exec();
 
@@ -493,7 +499,7 @@ app.post("/api/posts/:id/upvote", async (req, res) => {
 app.post("/api/posts/:id/answer", async (req, res) => {
     try {
         const { replyId } = req.body;
-        
+
         // Update reply to mark as answer
         if (replyId) {
             await Reply.findByIdAndUpdate(replyId, { isAnswer: true }, { new: true });
@@ -520,12 +526,20 @@ app.post("/api/posts/:id/answer", async (req, res) => {
     }
 });
 
+// Add catch-all route before error handler
+app.use('*', (req, res) => {
+    res.status(404).json({ error: 'Route not found' });
+});
+
 // Error handling middleware
 app.use((err, req, res, next) => {
-    console.error(err.stack);
-    res.status(500).json({
-        error: "Internal Server Error",
-        message: process.env.NODE_ENV === 'development' ? err.message : 'Something went wrong'
+    console.error('Error:', err);
+    if (res.headersSent) {
+        return next(err);
+    }
+    res.status(err.status || 500).json({
+        error: err.message || 'Internal Server Error',
+        status: err.status || 500
     });
 });
 

@@ -5,11 +5,14 @@ FROM node:18-alpine
 WORKDIR /app
 
 # Copy package files first to leverage Docker layer caching
-# ...existing code (if you have yarn.lock or other package files, copy them too)...
 COPY package*.json ./
 
-# Install dependencies
-RUN npm ci --only=production
+# Install dependencies: use npm ci if package-lock.json exists, otherwise fallback to npm install (production-only)
+RUN if [ -f package-lock.json ]; then \
+        npm ci --only=production --no-audit --no-fund; \
+    else \
+        npm install --omit=dev --no-audit --no-fund; \
+    fi
 
 # Copy rest of the application
 COPY . .

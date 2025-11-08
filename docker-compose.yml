@@ -1,0 +1,38 @@
+version: '3.8'
+
+services:
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: learnato-forum-backend
+    ports:
+      - "5000:5000"
+    environment:
+      - PORT=5000
+      - FRONTEND_URL=http://localhost:80
+      - MONGO_URI=${MONGO_URI:-}
+    volumes:
+      - ./backend:/app
+      - /app/node_modules
+    networks:
+      - learnato-network
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        - VITE_API_URL=
+    container_name: learnato-forum-frontend
+    ports:
+      - "80:80"
+    depends_on:
+      - backend
+    networks:
+      - learnato-network
+
+networks:
+  learnato-network:
+    driver: bridge
+

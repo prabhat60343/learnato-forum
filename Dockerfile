@@ -9,9 +9,9 @@ COPY package*.json ./
 
 # Install dependencies: use npm ci if package-lock.json exists, otherwise fallback to npm install (production-only)
 RUN if [ -f package-lock.json ]; then \
-        npm ci --only=production --no-audit --no-fund; \
+        npm ci --omit=dev; \
     else \
-        npm install --omit=dev --no-audit --no-fund; \
+        npm install --omit=dev; \
     fi
 
 # Copy rest of the application

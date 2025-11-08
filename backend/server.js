@@ -49,6 +49,10 @@ app.use(cors({
     credentials: true
 }));
 app.use(express.json());
+app.use((req, res, next) => {
+    res.setHeader('Content-Type', 'application/json');
+    next();
+});
 
 // Connect to MongoDB or use in-memory fallback
 let Post, Reply;
@@ -74,20 +78,24 @@ const PostSchema = new mongoose.Schema({
 });
 
 // Try to connect to MongoDB if URI is provided
+mongoose.set('strictQuery', false);
 if (process.env.MONGO_URI) {
-    mongoose.connect(process.env.MONGO_URI)
-        .then(() => {
-            console.log("✅ Connected to MongoDB");
-            useMongoDB = true;
-            // Set up Mongoose models after connection
-            Post = mongoose.models.Post || mongoose.model("Post", PostSchema);
-            Reply = mongoose.models.Reply || mongoose.model("Reply", ReplySchema);
-        })
-        .catch((err) => {
-            console.error("❌ MongoDB connection error:", err);
-            console.log("⚠️  Falling back to in-memory storage");
-            useMongoDB = false;
-        });
+    mongoose.connect(process.env.MONGO_URI, {
+        useNewUrlParser: true,
+        useUnifiedTopology: true,
+    })
+    .then(() => {
+        console.log("✅ Connected to MongoDB");
+        useMongoDB = true;
+        // Set up Mongoose models after connection
+        Post = mongoose.models.Post || mongoose.model("Post", PostSchema);
+        Reply = mongoose.models.Reply || mongoose.model("Reply", ReplySchema);
+    })
+    .catch((err) => {
+        console.error("❌ MongoDB connection error:", err);
+        console.log("⚠️  Falling back to in-memory storage");
+        useMongoDB = false;
+    });
 }
 
 // Set up in-memory storage (default, will be overridden if MongoDB connects successfully)
@@ -360,10 +368,17 @@ app.get("/api/posts", async (req, res) => {
             );
         }
 
-        res.json(posts);
+        if (!posts) {
+            return res.status(200).json([]);
+        }
+        
+        res.status(200).json(posts);
     } catch (err) {
         console.error("Error fetching posts:", err);
-        res.status(500).json({ error: "Failed to fetch posts", details: err.message });
+        res.status(500).json({ 
+            error: "Failed to fetch posts", 
+            message: err.message 
+        });
     }
 });
 
@@ -503,6 +518,15 @@ app.post("/api/posts/:id/answer", async (req, res) => {
         console.error("Error marking as answered:", err);
         res.status(500).json({ error: "Failed to mark as answered", details: err.message });
     }
+});
+
+// Error handling middleware
+app.use((err, req, res, next) => {
+    console.error(err.stack);
+    res.status(500).json({
+        error: "Internal Server Error",
+        message: process.env.NODE_ENV === 'development' ? err.message : 'Something went wrong'
+    });
 });
 
 const PORT = process.env.PORT || 5000;

@@ -60,6 +60,20 @@ app.use((req, res, next) => {
     next();
 });
 
+// add explicit preflight handler
+app.options('*', cors());
+
+// add a simple health/root endpoint to avoid HTML/401 responses for GET /
+app.get('/', (req, res) => {
+    return res.status(200).json({ status: 'ok', message: 'Backend API is running' });
+});
+
+// optional lightweight handler for vite.svg requests (avoid HTML/401 responses when frontend asset missing)
+// replace with real static serving if you deploy frontend assets alongside backend
+app.get('/vite.svg', (req, res) => {
+    return res.status(404).json({ error: 'Asset not found', asset: 'vite.svg' });
+});
+
 // Connect to MongoDB or use in-memory fallback
 let Post, Reply;
 let useMongoDB = false;
